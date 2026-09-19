@@ -1,0 +1,3003 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>AI Hardware IDE</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+
+body{
+    background:#0b1120;
+    font-family:Inter,system-ui,sans-serif
+}
+
+.popup-enter{
+    animation:popIn .25s ease-out
+}
+
+@keyframes popIn{
+    from{
+        opacity:0;
+        transform:scale(.95)
+    }
+    to{
+        opacity:1;
+        transform:scale(1)
+    }
+}
+
+.serial-line{
+    font-family:"Fira Code",monospace;
+    font-size:.8rem
+}
+
+pre{
+    white-space:pre-wrap;
+    word-break:break-word
+}
+
+</style>
+
+</head>
+
+
+<body class="text-slate-200 antialiased">
+
+
+<div class="flex h-screen w-full overflow-hidden">
+
+
+<!-- =====================================================
+     LEFT PANEL
+====================================================== -->
+
+<div class="w-1/3 min-w-[340px] max-w-[480px]
+            bg-[#0f172a]
+            border-r border-slate-700
+            flex flex-col">
+
+
+    <!-- HEADER -->
+
+    <div class="p-4 border-b border-slate-700
+                flex items-center gap-3">
+
+        <div class="w-8 h-8 rounded-lg
+                    bg-gradient-to-br
+                    from-cyan-500 to-blue-600
+                    flex items-center justify-center
+                    text-black font-bold">
+
+            AI
+
+        </div>
+
+        <span class="font-semibold text-lg
+                     tracking-tight text-white">
+
+            Hardware
+            <span class="text-cyan-400">
+                IDE
+            </span>
+
+        </span>
+
+    </div>
+
+
+    <!-- PROJECT INPUT -->
+
+    <div class="p-4 border-b border-slate-700">
+
+        <label class="text-xs uppercase
+                      tracking-wider
+                      text-slate-400
+                      font-semibold">
+
+            Describe your project
+
+        </label>
+
+
+        <textarea
+            id="projectPrompt"
+            rows="3"
+            class="w-full mt-2
+                   bg-slate-800
+                   border border-slate-600
+                   rounded-lg p-3
+                   text-sm
+                   focus:outline-none
+                   focus:ring-2
+                   focus:ring-cyan-500
+                   placeholder-slate-500
+                   resize-none"
+            placeholder="e.g. I want a temperature monitoring system using ESP32 and DHT22"></textarea>
+
+
+        <button
+            id="generateBtn"
+            class="mt-3 w-full
+                   bg-cyan-600
+                   hover:bg-cyan-500
+                   text-white
+                   font-medium
+                   py-2.5
+                   rounded-lg
+                   transition
+                   flex items-center
+                   justify-center
+                   gap-2">
+
+            <span>⚡</span>
+
+            Generate live build
+
+        </button>
+
+    </div>
+
+
+    <!-- CHAT -->
+
+    <div
+        id="chatLog"
+        class="flex-1 overflow-y-auto
+               p-4 space-y-3 text-sm">
+    </div>
+
+
+    <!-- SERIAL MONITOR -->
+
+    <div class="border-t border-slate-700
+                p-3 bg-[#0a0f1a]">
+
+        <div class="flex justify-between
+                    items-center
+                    text-xs text-slate-400
+                    mb-1">
+
+            <span>
+                🔴 Live serial monitor
+            </span>
+
+            <span
+                id="serialStatus"
+                class="text-cyan-400">
+
+                disconnected
+
+            </span>
+
+        </div>
+
+
+        <div
+            id="serialOutput"
+            class="h-28 overflow-y-auto
+                   bg-black/40
+                   rounded p-2
+                   text-xs font-mono
+                   text-slate-300
+                   border border-slate-700">
+        </div>
+
+    </div>
+
+
+</div>
+
+
+<!-- =====================================================
+     RIGHT PANEL
+====================================================== -->
+
+<div class="flex-1 flex flex-col
+            overflow-hidden
+            bg-[#0b1120]">
+
+
+    <!-- TOP BAR -->
+
+    <div class="h-12
+                border-b border-slate-700
+                flex items-center
+                px-5
+                text-sm text-slate-400">
+
+
+        <span
+            id="dynamicProjectTitle"
+            class="text-white font-medium">
+        </span>
+
+
+        <span class="ml-auto flex gap-3">
+
+
+            <!-- CONNECTION BADGE -->
+
+            <span
+                id="connectionBadge"
+                class="hidden items-center gap-1
+                       text-xs bg-slate-800
+                       px-2 py-1
+                       rounded-full">
+
+                ⚡ disconnected
+
+            </span>
+
+
+            <!-- CONNECT BUTTON -->
+
+            <button
+                id="connectBtn"
+                class="hidden
+                       bg-blue-600
+                       hover:bg-blue-500
+                       text-white
+                       text-xs
+                       px-3 py-1.5
+                       rounded-lg">
+
+                Connect ESP32
+
+            </button>
+
+
+        </span>
+
+    </div>
+
+
+    <!-- DYNAMIC CONTENT -->
+
+    <div
+        id="dynamicContent"
+        class="flex-1
+               overflow-y-auto
+               p-6">
+    </div>
+
+
+</div>
+
+
+</div>
+
+
+<!-- =====================================================
+     POPUP
+====================================================== -->
+
+<div
+    id="popupContainer"
+    class="fixed bottom-6
+           right-6
+           z-50
+           flex flex-col
+           gap-3
+           w-96
+           max-w-[90vw]">
+</div>
+
+
+<script>
+
+
+/* =====================================================
+   GLOBAL STATE
+====================================================== */
+
+let serialPort = null;
+
+let serialReader = null;
+
+let serialWriter = null;
+
+let isSerialOpen = false;
+
+let flashing = false;
+
+
+/*
+    Stores everything generated by AI
+    and compiled firmware.
+*/
+
+let currentProjectContext = {
+
+    components: [],
+
+    instructions: [],
+
+    cpp_code: "",
+
+    chat_message: "",
+
+    firmware: null,
+
+    firmware_base64: null
+
+};
+
+
+/* =====================================================
+   DOM ELEMENTS
+====================================================== */
+
+const chatLog =
+    document.getElementById("chatLog");
+
+const dynamicContent =
+    document.getElementById("dynamicContent");
+
+const projectPrompt =
+    document.getElementById("projectPrompt");
+
+const generateBtn =
+    document.getElementById("generateBtn");
+
+const popupContainer =
+    document.getElementById("popupContainer");
+
+const serialOutput =
+    document.getElementById("serialOutput");
+
+const serialStatus =
+    document.getElementById("serialStatus");
+
+const dynamicProjectTitle =
+    document.getElementById(
+        "dynamicProjectTitle"
+    );
+
+const connectionBadge =
+    document.getElementById(
+        "connectionBadge"
+    );
+
+const connectBtn =
+    document.getElementById(
+        "connectBtn"
+    );
+
+
+/* =====================================================
+   CHAT MESSAGE
+====================================================== */
+
+function addChatMessage(role,text){
+
+    const div =
+        document.createElement("div");
+
+    div.className =
+        "p-3 rounded-lg text-sm";
+
+
+    if(role === "user"){
+
+        div.classList.add(
+            "bg-slate-800",
+            "border-l-4",
+            "border-cyan-500",
+            "ml-6"
+        );
+
+
+        const title =
+            document.createElement("span");
+
+        title.className =
+            "text-cyan-400 font-semibold";
+
+        title.textContent =
+            "You";
+
+
+        const content =
+            document.createElement("p");
+
+        content.className =
+            "mt-1 text-slate-200";
+
+        content.textContent =
+            text;
+
+        div.append(
+            title,
+            content
+        );
+    }
+
+
+    if(role === "ai"){
+
+        div.classList.add(
+            "bg-slate-800/80",
+            "border-l-4",
+            "border-emerald-500",
+            "mr-6"
+        );
+
+
+        const title =
+            document.createElement("span");
+
+        title.className =
+            "text-emerald-400 font-semibold";
+
+        title.textContent =
+            "AI mentor";
+
+
+        const content =
+            document.createElement("p");
+
+        content.className =
+            "mt-1 text-slate-200";
+
+        content.textContent =
+            text;
+
+        div.append(
+            title,
+            content
+        );
+    }
+
+
+    if(role === "system"){
+
+        div.classList.add(
+            "bg-slate-800/50",
+            "text-slate-400",
+            "text-xs",
+            "italic"
+        );
+
+
+        div.textContent =
+            "⚙️ " + text;
+    }
+
+
+    if(role === "diagnostic"){
+
+        div.classList.add(
+            "bg-amber-900/30",
+            "border-l-4",
+            "border-amber-500",
+            "mr-6"
+        );
+
+
+        const title =
+            document.createElement("span");
+
+        title.className =
+            "text-amber-400 font-semibold";
+
+        title.textContent =
+            "AI diagnostic";
+
+
+        const content =
+            document.createElement("p");
+
+        content.className =
+            "mt-1 text-amber-200";
+
+        content.textContent =
+            text;
+
+        div.append(
+            title,
+            content
+        );
+    }
+
+
+    chatLog.appendChild(div);
+
+    chatLog.scrollTop =
+        chatLog.scrollHeight;
+}
+
+
+/* =====================================================
+   POPUP
+====================================================== */
+
+function showPopup(
+    message,
+    type="error"
+){
+
+    const popup =
+        document.createElement("div");
+
+
+    popup.className =
+        "popup-enter text-white p-4 " +
+        "rounded-lg shadow-xl " +
+        "flex items-start gap-3 " +
+        "border-l-4";
+
+
+    if(type === "error"){
+
+        popup.classList.add(
+            "bg-red-900/90",
+            "border-red-500"
+        );
+
+    }
+    else if(type === "success"){
+
+        popup.classList.add(
+            "bg-emerald-900/90",
+            "border-emerald-500"
+        );
+
+    }
+    else{
+
+        popup.classList.add(
+            "bg-amber-900/90",
+            "border-amber-500"
+        );
+    }
+
+
+    const icon =
+        document.createElement("div");
+
+    icon.className =
+        "text-2xl";
+
+    icon.textContent =
+        type === "error"
+            ? "⚠️"
+            : type === "success"
+                ? "✅"
+                : "ℹ️";
+
+
+    const body =
+        document.createElement("div");
+
+    body.className =
+        "flex-1";
+
+
+    const title =
+        document.createElement("p");
+
+    title.className =
+        "font-semibold";
+
+    title.textContent =
+        type === "error"
+            ? "Error"
+            : type === "success"
+                ? "Success"
+                : "Information";
+
+
+    const text =
+        document.createElement("p");
+
+    text.className =
+        "text-sm mt-1";
+
+    text.textContent =
+        message;
+
+
+    body.append(
+        title,
+        text
+    );
+
+
+    const close =
+        document.createElement("button");
+
+    close.className =
+        "text-white/70 hover:text-white";
+
+    close.textContent =
+        "✕";
+
+    close.onclick =
+        () => popup.remove();
+
+
+    popup.append(
+        icon,
+        body,
+        close
+    );
+
+
+    popupContainer.appendChild(
+        popup
+    );
+
+
+    setTimeout(()=>{
+
+        if(popup.parentElement)
+            popup.remove();
+
+    },8000);
+}
+
+
+/* =====================================================
+   FALLBACK PROJECT
+====================================================== */
+
+/*
+    Gemini has a daily quota.
+
+    If Gemini returns HTTP 429,
+    this fallback allows the IDE to continue
+    testing the complete pipeline.
+
+    Current fallback specifically supports:
+
+        LED blinking on ESP32 GPIO 2 / D2
+        Serial Monitor at 115200 baud
+*/
+
+function getFallbackProject(prompt){
+
+    const lower =
+        prompt.toLowerCase();
+
+
+    if(
+        lower.includes("led") &&
+        (
+            lower.includes("d2") ||
+            lower.includes("pin 2") ||
+            lower.includes("gpio 2") ||
+            lower.includes("gpio2")
+        )
+    ){
+
+        return {
+
+            chat_message:
+                "ESP32 LED blink test on GPIO 2 (D2) with live Serial Monitor output. Gemini quota is currently unavailable, so the local fallback project was used.",
+
+            components:[
+
+                {
+                    name:"ESP32 DevKit",
+                    rank:"Recommended",
+                    price:"₹400–₹700"
+                },
+
+                {
+                    name:"LED",
+                    rank:"Recommended",
+                    price:"₹5–₹10"
+                },
+
+                {
+                    name:"220Ω resistor",
+                    rank:"Recommended",
+                    price:"₹2–₹5"
+                }
+
+            ],
+
+            instructions:[
+
+                {
+                    step:"1",
+                    text:"Connect ESP32 GPIO 2 (D2) to the LED anode through a 220Ω resistor."
+                },
+
+                {
+                    step:"2",
+                    text:"Connect the LED cathode to ESP32 GND."
+                },
+
+                {
+                    step:"3",
+                    text:"Connect the ESP32 to the computer using USB."
+                },
+
+                {
+                    step:"4",
+                    text:"After uploading, open the Live Serial Monitor at 115200 baud."
+                }
+
+            ],
+
+            cpp_code:
+`#define LED_PIN 2
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(LED_PIN, OUTPUT);
+
+  Serial.println("ESP32 STARTED");
+  Serial.println("LED blinking on GPIO 2 / D2");
+
+}
+
+void loop() {
+
+  digitalWrite(LED_PIN, HIGH);
+
+  Serial.println("LED ON");
+
+  delay(1000);
+
+  digitalWrite(LED_PIN, LOW);
+
+  Serial.println("LED OFF");
+
+  delay(1000);
+
+}`
+
+        };
+
+    }
+
+
+    throw new Error(
+        "Gemini quota is exhausted and no local fallback is available for this project."
+    );
+}
+
+
+/* =====================================================
+   AI REQUEST
+====================================================== */
+
+async function fetchFromAI(prompt){
+
+    let response;
+
+    try{
+
+        response =
+            await fetch(
+                "http://localhost:5000/ask_ai",
+                {
+
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+                        prompt:prompt
+                    })
+                }
+            );
+
+    }
+    catch(error){
+
+        throw new Error(
+            "Cannot connect to the backend. Make sure Flask is running on http://localhost:5000."
+        );
+    }
+
+
+    let data;
+
+
+    try{
+
+        data =
+            await response.json();
+
+    }
+    catch{
+
+        throw new Error(
+            "Backend returned an invalid response."
+        );
+    }
+
+
+    /*
+       GEMINI QUOTA FALLBACK
+    */
+
+    if(!response.ok){
+
+        const errorText =
+            JSON.stringify(data).toLowerCase();
+
+        if(
+            response.status === 429 ||
+            errorText.includes("resource_exhausted") ||
+            errorText.includes("quota") ||
+            errorText.includes("429")
+        ){
+
+            addChatMessage(
+                "system",
+                "Gemini quota is currently exhausted. Switching to local fallback mode."
+            );
+
+            return getFallbackProject(prompt);
+        }
+
+
+        throw new Error(
+            data.error ||
+            "AI request failed."
+        );
+    }
+
+
+    if(data.error){
+
+        const errorText =
+            JSON.stringify(data).toLowerCase();
+
+        if(
+            errorText.includes("resource_exhausted") ||
+            errorText.includes("quota") ||
+            errorText.includes("429")
+        ){
+
+            addChatMessage(
+                "system",
+                "Gemini quota is currently exhausted. Switching to local fallback mode."
+            );
+
+            return getFallbackProject(prompt);
+        }
+
+
+        throw new Error(
+            data.error
+        );
+    }
+
+
+    if(
+        !data.components ||
+        !Array.isArray(data.components)
+    ){
+
+        throw new Error(
+            "AI response does not contain valid components."
+        );
+    }
+
+
+    if(
+        !data.instructions ||
+        !Array.isArray(data.instructions)
+    ){
+
+        throw new Error(
+            "AI response does not contain valid wiring instructions."
+        );
+    }
+
+
+    if(
+        typeof data.cpp_code !== "string" ||
+        !data.cpp_code.trim()
+    ){
+
+        throw new Error(
+            "AI response does not contain C++ code."
+        );
+    }
+
+
+    return data;
+}
+
+
+/* =====================================================
+   HARDWARE RECOMMENDATIONS
+====================================================== */
+
+function renderRecommendations(data){
+
+    const container =
+        document.createElement("div");
+
+    container.className =
+        "mb-8";
+
+
+    const heading =
+        document.createElement("h2");
+
+    heading.className =
+        "text-xl font-semibold " +
+        "text-white mb-3 " +
+        "flex items-center gap-2";
+
+    heading.textContent =
+        "📦 Recommended hardware";
+
+
+    const grid =
+        document.createElement("div");
+
+    grid.className =
+        "grid grid-cols-1 md:grid-cols-2 gap-3";
+
+
+    data.forEach((comp,idx)=>{
+
+        const card =
+            document.createElement("div");
+
+        card.className =
+            "bg-slate-800/60 " +
+            "border border-slate-700 " +
+            "rounded-xl p-4 " +
+            "flex flex-col " +
+            "hover:border-cyan-500 " +
+            "transition";
+
+
+        const top =
+            document.createElement("div");
+
+        top.className =
+            "flex justify-between items-start";
+
+
+        const rank =
+            document.createElement("span");
+
+        rank.className =
+            "text-xs font-semibold " +
+            "px-2 py-0.5 rounded-full";
+
+
+        if(idx === 0){
+
+            rank.classList.add(
+                "bg-cyan-900/60",
+                "text-cyan-300"
+            );
+
+        }
+        else{
+
+            rank.classList.add(
+                "bg-slate-700",
+                "text-slate-300"
+            );
+        }
+
+
+        rank.textContent =
+            comp.rank ||
+            "Recommended";
+
+
+        const price =
+            document.createElement("span");
+
+        price.className =
+            "text-emerald-400 " +
+            "font-mono text-sm";
+
+        price.textContent =
+            comp.price ||
+            "N/A";
+
+
+        top.append(
+            rank,
+            price
+        );
+
+
+        const name =
+            document.createElement("p");
+
+        name.className =
+            "text-white font-medium mt-2";
+
+        name.textContent =
+            comp.name ||
+            "Unnamed component";
+
+
+        const row =
+            document.createElement("div");
+
+        row.className =
+            "mt-3 flex items-center";
+
+
+        const checkbox =
+            document.createElement("input");
+
+        checkbox.type =
+            "checkbox";
+
+        checkbox.checked =
+            true;
+
+        checkbox.className =
+            "w-4 h-4 " +
+            "accent-cyan-500 rounded";
+
+        checkbox.dataset.componentIndex =
+            idx;
+
+
+        const label =
+            document.createElement("label");
+
+        label.className =
+            "ml-2 text-xs text-slate-400";
+
+        label.textContent =
+            "I will use this";
+
+
+        row.append(
+            checkbox,
+            label
+        );
+
+
+        card.append(
+            top,
+            name,
+            row
+        );
+
+
+        grid.appendChild(card);
+
+    });
+
+
+    container.append(
+        heading,
+        grid
+    );
+
+
+    dynamicContent.appendChild(
+        container
+    );
+}
+
+
+/* =====================================================
+   WIRING GUIDE
+====================================================== */
+
+function renderInstructions(data){
+
+    const container =
+        document.createElement("div");
+
+    container.className =
+        "mb-8";
+
+
+    const heading =
+        document.createElement("h2");
+
+    heading.className =
+        "text-xl font-semibold " +
+        "text-white mb-3 " +
+        "flex items-center gap-2";
+
+    heading.textContent =
+        "🔌 Wiring guide";
+
+
+    const list =
+        document.createElement("div");
+
+    list.className =
+        "bg-slate-800/40 " +
+        "border border-slate-700 " +
+        "rounded-xl p-5 space-y-3";
+
+
+    data.forEach(item=>{
+
+        const row =
+            document.createElement("div");
+
+        row.className =
+            "flex items-start gap-3 text-sm";
+
+
+        const number =
+            document.createElement("span");
+
+        number.className =
+            "text-cyan-400 font-mono w-6";
+
+        number.textContent =
+            (item.step || "") + ".";
+
+
+        const text =
+            document.createElement("span");
+
+        text.className =
+            "text-slate-200";
+
+        text.textContent =
+            item.text || "";
+
+
+        row.append(
+            number,
+            text
+        );
+
+
+        list.appendChild(row);
+
+    });
+
+
+    /* -----------------------------------------
+       HARDWARE CONFIRMATION
+    ----------------------------------------- */
+
+    const hardwareCheck =
+        document.createElement("div");
+
+    hardwareCheck.className =
+        "mt-4 flex items-center gap-3";
+
+
+    const checkbox =
+        document.createElement("input");
+
+    checkbox.type =
+        "checkbox";
+
+    checkbox.id =
+        "wiringDoneCheck";
+
+    checkbox.className =
+        "w-5 h-5 " +
+        "accent-emerald-500 rounded";
+
+
+    const label =
+        document.createElement("label");
+
+    label.className =
+        "text-sm text-slate-300";
+
+    label.textContent =
+        "I've finished the hardware connections";
+
+
+    hardwareCheck.append(
+        checkbox,
+        label
+    );
+
+
+    /* -----------------------------------------
+       BUTTON ROW
+    ----------------------------------------- */
+
+    const buttonRow =
+        document.createElement("div");
+
+    buttonRow.className =
+        "mt-4 flex gap-3 flex-wrap";
+
+
+    /* CONNECT */
+
+    const connectButton =
+        document.createElement("button");
+
+    connectButton.id =
+        "connectLocalBtn";
+
+    connectButton.className =
+        "bg-blue-600 " +
+        "hover:bg-blue-500 " +
+        "text-white font-medium " +
+        "py-2.5 px-6 rounded-lg " +
+        "transition";
+
+    connectButton.textContent =
+        "🔌 Connect ESP32";
+
+
+    /* FLASH */
+
+    const flashButton =
+        document.createElement("button");
+
+    flashButton.id =
+        "flashBtn";
+
+    flashButton.className =
+        "bg-emerald-600 " +
+        "hover:bg-emerald-500 " +
+        "text-white font-medium " +
+        "py-2.5 px-6 rounded-lg " +
+        "transition " +
+        "disabled:opacity-50 " +
+        "disabled:cursor-not-allowed";
+
+
+    flashButton.disabled =
+        true;
+
+
+    flashButton.textContent =
+        "⬆️ Upload firmware";
+
+
+    /* STATUS */
+
+    const status =
+        document.createElement("p");
+
+    status.id =
+        "firmwareStatus";
+
+    status.className =
+        "text-xs text-slate-500 mt-2";
+
+    status.textContent =
+        "Waiting for firmware compilation...";
+
+
+    connectButton.onclick =
+        connectToBoard;
+
+
+    flashButton.onclick =
+        flashToBoard;
+
+
+    checkbox.addEventListener(
+        "change",
+        updateFlashButton
+    );
+
+
+    buttonRow.append(
+        connectButton,
+        flashButton
+    );
+
+
+    container.append(
+        heading,
+        list,
+        hardwareCheck,
+        buttonRow,
+        status
+    );
+
+
+    dynamicContent.appendChild(
+        container
+    );
+
+
+    updateFlashButton();
+}
+
+
+/* =====================================================
+   CODE
+====================================================== */
+
+function renderCode(code){
+
+    const container =
+        document.createElement("div");
+
+    container.className =
+        "mb-8";
+
+
+    const heading =
+        document.createElement("h2");
+
+    heading.className =
+        "text-xl font-semibold " +
+        "text-white mb-3 " +
+        "flex items-center gap-2";
+
+    heading.textContent =
+        "💻 Generated ESP32 C++";
+
+
+    const wrapper =
+        document.createElement("div");
+
+    wrapper.className =
+        "bg-black/50 " +
+        "border border-slate-700 " +
+        "rounded-xl overflow-hidden";
+
+
+    const toolbar =
+        document.createElement("div");
+
+    toolbar.className =
+        "flex justify-between " +
+        "items-center px-4 py-2 " +
+        "border-b border-slate-700 " +
+        "bg-slate-900";
+
+
+    const title =
+        document.createElement("span");
+
+    title.className =
+        "text-xs text-slate-400";
+
+    title.textContent =
+        "Arduino C++";
+
+
+    const copyButton =
+        document.createElement("button");
+
+    copyButton.className =
+        "text-xs bg-slate-700 " +
+        "hover:bg-slate-600 " +
+        "px-3 py-1 rounded";
+
+    copyButton.textContent =
+        "Copy";
+
+
+    copyButton.onclick =
+        async()=>{
+
+            try{
+
+                await navigator.clipboard
+                    .writeText(code);
+
+                copyButton.textContent =
+                    "Copied";
+
+                setTimeout(()=>{
+
+                    copyButton.textContent =
+                        "Copy";
+
+                },1500);
+
+            }
+            catch{
+
+                showPopup(
+                    "Could not copy the code.",
+                    "error"
+                );
+            }
+        };
+
+
+    const pre =
+        document.createElement("pre");
+
+    pre.className =
+        "p-4 text-sm " +
+        "text-cyan-200 " +
+        "overflow-auto " +
+        "max-h-[500px]";
+
+    pre.textContent =
+        code;
+
+
+    toolbar.append(
+        title,
+        copyButton
+    );
+
+
+    wrapper.append(
+        toolbar,
+        pre
+    );
+
+
+    container.append(
+        heading,
+        wrapper
+    );
+
+
+    dynamicContent.appendChild(
+        container
+    );
+}
+
+
+/* =====================================================
+   PROJECT RENDER
+====================================================== */
+
+function renderProject(data){
+
+    dynamicContent.innerHTML = "";
+
+
+    renderRecommendations(
+        data.components
+    );
+
+
+    renderInstructions(
+        data.instructions
+    );
+
+
+    renderCode(
+        data.cpp_code
+    );
+}
+
+
+/* =====================================================
+   COMPILE FIRMWARE
+====================================================== */
+
+async function compileFirmware(cppCode){
+
+    const status =
+        document.getElementById(
+            "firmwareStatus"
+        );
+
+
+    if(status){
+
+        status.textContent =
+            "Compiling ESP32 firmware...";
+    }
+
+
+    addChatMessage(
+        "system",
+        "Compiling generated C++ into an ESP32 firmware binary..."
+    );
+
+
+    const response =
+        await fetch(
+            "http://localhost:5000/compile",
+            {
+
+                method:"POST",
+
+                headers:{
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:JSON.stringify({
+                    cpp_code:cppCode
+                })
+            }
+        );
+
+
+    let data;
+
+
+    try{
+
+        data =
+            await response.json();
+
+    }
+    catch{
+
+        throw new Error(
+            "Compiler returned an invalid response."
+        );
+    }
+
+
+    if(
+        !response.ok ||
+        !data.success
+    ){
+
+        throw new Error(
+            data.error ||
+            "ESP32 compilation failed."
+        );
+    }
+
+
+    if(
+        !data.firmware ||
+        !data.firmware.data
+    ){
+
+        throw new Error(
+            "Backend compiled the code but did not return firmware data."
+        );
+    }
+
+
+    currentProjectContext.firmware =
+        data.firmware;
+
+
+    currentProjectContext.firmware_base64 =
+        data.firmware.data;
+
+
+    if(status){
+
+        status.textContent =
+            "Compilation successful. Firmware is ready for upload.";
+    }
+
+
+    updateFlashButton();
+
+
+    return data.firmware;
+}
+
+
+/* =====================================================
+   GENERATE
+====================================================== */
+
+async function handleGenerate(){
+
+    const prompt =
+        projectPrompt.value.trim();
+
+
+    if(!prompt){
+
+        addChatMessage(
+            "system",
+            "Please type your project idea first."
+        );
+
+        return;
+    }
+
+
+    generateBtn.disabled =
+        true;
+
+
+    generateBtn.classList.add(
+        "opacity-60",
+        "cursor-not-allowed"
+    );
+
+
+    chatLog.innerHTML = "";
+
+    dynamicContent.innerHTML = "";
+
+    serialOutput.innerHTML = "";
+
+    popupContainer.innerHTML = "";
+
+
+    currentProjectContext = {
+
+        components:[],
+
+        instructions:[],
+
+        cpp_code:"",
+
+        chat_message:"",
+
+        firmware:null,
+
+        firmware_base64:null
+    };
+
+
+    addChatMessage(
+        "user",
+        prompt
+    );
+
+
+    dynamicProjectTitle.textContent =
+        prompt.length > 60
+            ? prompt.substring(0,60) + "…"
+            : prompt;
+
+
+    addChatMessage(
+        "system",
+        "Calling Gemini and generating the hardware design..."
+    );
+
+
+    try{
+
+        /* -----------------------------------------
+           AI
+        ----------------------------------------- */
+
+        const data =
+            await fetchFromAI(prompt);
+
+
+        currentProjectContext =
+            data;
+
+
+        if(data.chat_message){
+
+            addChatMessage(
+                "ai",
+                data.chat_message
+            );
+        }
+
+
+        /* -----------------------------------------
+           UI
+        ----------------------------------------- */
+
+        renderProject(data);
+
+
+        /* -----------------------------------------
+           COMPILE
+        ----------------------------------------- */
+
+        await compileFirmware(
+            data.cpp_code
+        );
+
+
+        addChatMessage(
+            "system",
+            "Compilation successful. The ESP32 .bin firmware is ready."
+        );
+
+
+        addChatMessage(
+            "system",
+            "Review the wiring and confirm the connections before uploading."
+        );
+
+
+        connectBtn.classList.remove(
+            "hidden"
+        );
+
+        connectBtn.classList.add(
+            "inline-block"
+        );
+
+
+        updateFlashButton();
+
+
+    }
+    catch(error){
+
+        console.error(error);
+
+
+        addChatMessage(
+            "system",
+            "Project generation failed: " +
+            error.message
+        );
+
+
+        showPopup(
+            error.message,
+            "error"
+        );
+
+    }
+    finally{
+
+        generateBtn.disabled =
+            false;
+
+
+        generateBtn.classList.remove(
+            "opacity-60",
+            "cursor-not-allowed"
+        );
+    }
+}
+
+
+/* =====================================================
+   CONNECT ESP32
+====================================================== */
+
+async function connectToBoard(){
+
+    if(!("serial" in navigator)){
+
+        showPopup(
+            "Web Serial is not supported in this browser.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    try{
+
+        /*
+         * If already connected, don't request again.
+         */
+
+        if(serialPort){
+
+            showPopup(
+                "ESP32 port is already selected.",
+                "info"
+            );
+
+            return;
+        }
+
+
+        serialStatus.textContent =
+            "selecting";
+
+
+        /*
+         * ONLY SELECT THE PORT.
+         *
+         * Do not open it here.
+         */
+
+        serialPort =
+            await navigator.serial.requestPort();
+
+
+        serialStatus.textContent =
+            "port selected";
+
+
+        connectionBadge.classList.remove(
+            "hidden"
+        );
+
+
+        connectionBadge.textContent =
+            "🔵 port selected";
+
+
+        connectBtn.textContent =
+            "ESP32 Selected";
+
+
+        connectBtn.disabled =
+            true;
+
+
+        connectBtn.classList.remove(
+            "bg-blue-600"
+        );
+
+
+        connectBtn.classList.add(
+            "bg-emerald-700"
+        );
+
+
+        addChatMessage(
+            "system",
+            "ESP32 COM port selected. The port will be opened when flashing."
+        );
+
+
+    }
+    catch(error){
+
+        console.error(error);
+
+
+        serialPort =
+            null;
+
+
+        serialStatus.textContent =
+            "disconnected";
+
+
+        if(
+            error.name ===
+            "NotFoundError"
+        ){
+
+            addChatMessage(
+                "system",
+                "No serial port was selected."
+            );
+
+            return;
+        }
+
+
+        showPopup(
+            error.message ||
+            "Unable to select ESP32.",
+            "error"
+        );
+    }
+}
+
+
+/* =====================================================
+   OPEN SERIAL MONITOR
+====================================================== */
+
+async function openSerialMonitor(){
+
+    if(!serialPort){
+
+        showPopup(
+            "ESP32 port is not selected.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    try{
+
+        /*
+         * Already open
+         */
+
+        if(isSerialOpen){
+
+            return;
+        }
+
+
+        /*
+         * Open COM port at 115200 baud
+         */
+
+        await serialPort.open({
+            baudRate:115200
+        });
+
+
+        isSerialOpen =
+            true;
+
+
+        serialStatus.textContent =
+            "connected";
+
+
+        connectionBadge.textContent =
+            "🟢 serial connected";
+
+
+        connectionBadge.classList.remove(
+            "hidden"
+        );
+
+
+        addChatMessage(
+            "system",
+            "ESP32 serial monitor connected at 115200 baud."
+        );
+
+
+        console.log(
+            "Serial monitor connected at 115200 baud."
+        );
+
+
+        /*
+         * Start reading ESP32 serial output
+         */
+
+        startSerialReader();
+
+    }
+    catch(error){
+
+        console.error(
+            "SERIAL MONITOR ERROR:",
+            error
+        );
+
+
+        isSerialOpen =
+            false;
+
+
+        serialStatus.textContent =
+            "error";
+
+
+        showPopup(
+            "Serial monitor failed: " +
+            (
+                error.message ||
+                error
+            ),
+            "error"
+        );
+    }
+}
+
+
+/* =====================================================
+   SERIAL READER
+====================================================== */
+
+async function startSerialReader(){
+
+    if(
+        !serialPort ||
+        !serialPort.readable
+    ){
+
+        return;
+    }
+
+
+    try{
+
+        const decoder =
+            new TextDecoderStream();
+
+
+        serialPort.readable.pipeTo(
+            decoder.writable
+        ).catch(
+            error => {
+                console.warn(
+                    "Serial pipe closed:",
+                    error
+                );
+            }
+        );
+
+
+        serialReader =
+            decoder.readable
+                .getReader();
+
+
+        let buffer = "";
+
+
+        while(isSerialOpen){
+
+            const {
+                value,
+                done
+            } =
+                await serialReader.read();
+
+
+            if(done)
+                break;
+
+
+            if(value){
+
+                buffer += value;
+
+
+                const lines =
+                    buffer.split("\n");
+
+
+                buffer =
+                    lines.pop() || "";
+
+
+                for(
+                    const line of lines
+                ){
+
+                    const cleanLine =
+                        line.trim();
+
+
+                    if(!cleanLine)
+                        continue;
+
+
+                    const element =
+                        document.createElement(
+                            "div"
+                        );
+
+
+                    element.className =
+                        "serial-line text-cyan-300";
+
+
+                    element.textContent =
+                        "> " + cleanLine;
+
+
+                    serialOutput.appendChild(
+                        element
+                    );
+
+
+                    serialOutput.scrollTop =
+                        serialOutput.scrollHeight;
+
+
+                    analyzeSerialLine(
+                        cleanLine
+                    );
+                }
+            }
+        }
+
+    }
+    catch(error){
+
+        if(isSerialOpen){
+
+            console.error(
+                "SERIAL READER ERROR:",
+                error
+            );
+
+            serialStatus.textContent =
+                "error";
+        }
+
+    }
+    finally{
+
+        try{
+
+            if(serialReader){
+
+                serialReader.releaseLock();
+
+            }
+
+        }
+        catch{}
+
+        serialReader = null;
+    }
+}
+
+
+/* =====================================================
+   SERIAL DIAGNOSTIC
+====================================================== */
+
+function analyzeSerialLine(line){
+
+    const lower =
+        line.toLowerCase();
+
+
+    if(
+        lower.includes("error") ||
+        lower.includes("failed") ||
+        lower.includes("nan") ||
+        lower.includes("timeout")
+    ){
+
+        addChatMessage(
+            "diagnostic",
+            "Serial output indicates a possible runtime or sensor problem: " +
+            line
+        );
+
+
+        showPopup(
+            "Serial diagnostic detected: " +
+            line,
+            "info"
+        );
+    }
+}
+
+
+/* =====================================================
+   CLOSE SERIAL BEFORE FLASH
+====================================================== */
+
+async function releaseSerialForFlashing(){
+
+    /*
+       esptool needs exclusive access to COM8.
+
+       Therefore close the serial monitor first.
+    */
+
+
+    isSerialOpen =
+        false;
+
+
+    if(serialReader){
+
+        try{
+
+            await serialReader.cancel();
+
+        }
+        catch(error){
+
+            console.warn(
+                "Serial reader cancel warning:",
+                error
+            );
+        }
+
+        try{
+
+            serialReader.releaseLock();
+
+        }
+        catch{}
+
+        serialReader =
+            null;
+    }
+
+
+    if(
+        serialPort &&
+        serialPort.readable
+    ){
+
+        try{
+
+            await serialPort.close();
+
+        }
+        catch(error){
+
+            console.warn(
+                "Could not close serial port:",
+                error
+            );
+        }
+    }
+
+
+    serialStatus.textContent =
+        "flashing";
+
+
+    connectionBadge.textContent =
+        "🟡 flashing";
+}
+
+
+/* =====================================================
+   FLASH ESP32
+====================================================== */
+
+async function flashToBoard(){
+
+    if(flashing)
+        return;
+
+
+    const checkbox =
+        document.getElementById(
+            "wiringDoneCheck"
+        );
+
+
+    if(
+        !checkbox ||
+        !checkbox.checked
+    ){
+
+        showPopup(
+            "Please confirm the hardware connections first.",
+            "info"
+        );
+
+        return;
+    }
+
+
+    if(
+        !currentProjectContext.firmware
+    ){
+
+        showPopup(
+            "Compiled firmware is not available.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    if(
+        !navigator.serial
+    ){
+
+        showPopup(
+            "Web Serial is not supported.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    flashing =
+        true;
+
+
+    updateFlashButton();
+
+
+    const status =
+        document.getElementById(
+            "firmwareStatus"
+        );
+
+
+    try{
+
+        /* -----------------------------------------
+           RELEASE SERIAL MONITOR
+        ----------------------------------------- */
+
+        addChatMessage(
+            "system",
+            "Closing serial monitor before flashing..."
+        );
+
+
+        await releaseSerialForFlashing();
+
+
+        /*
+           IMPORTANT:
+           The port is now closed and available
+           for esptool-js.
+        */
+
+
+        /* -----------------------------------------
+           LOAD ESPTOOL-JS
+        ----------------------------------------- */
+
+        addChatMessage(
+            "system",
+            "Loading ESP32 flashing engine..."
+        );
+
+
+        const {
+            ESPLoader,
+            Transport
+        } =
+            await import(
+                "https://unpkg.com/esptool-js@0.6.1/bundle.js"
+            );
+
+
+        addChatMessage(
+            "system",
+            "Flashing engine loaded."
+        );
+
+
+        /* -----------------------------------------
+           REQUEST PORT IF NEEDED
+        ----------------------------------------- */
+
+        if(!serialPort){
+
+            serialPort =
+                await navigator.serial.requestPort();
+        }
+
+
+        /* -----------------------------------------
+           TRANSPORT
+        ----------------------------------------- */
+
+        const transport =
+            new Transport(
+                serialPort,
+                true
+            );
+
+
+        /* -----------------------------------------
+           ESP LOADER
+        ----------------------------------------- */
+
+        const esploader =
+            new ESPLoader({
+
+                transport:transport,
+
+                /*
+                   115200 is intentionally used
+                   for stable browser flashing.
+                */
+
+                baudrate:115200,
+
+                terminal:{
+
+                    clean(){},
+
+                    writeLine(data){
+
+                        console.log(
+                            data
+                        );
+                    },
+
+                    write(data){
+
+                        console.log(
+                            data
+                        );
+                    }
+                }
+            });
+
+
+        /* -----------------------------------------
+           CONNECT TO BOOTLOADER
+        ----------------------------------------- */
+
+        if(status){
+
+            status.textContent =
+                "Connecting to ESP32 bootloader...";
+        }
+
+
+        showPopup(
+            "Connecting to ESP32 bootloader...",
+            "info"
+        );
+
+
+        await esploader.main();
+
+
+        console.log(
+            "Detected ESP32:",
+            esploader.chip
+        );
+
+
+        /* -----------------------------------------
+           FIRMWARE DATA
+        ----------------------------------------- */
+
+        const firmware =
+            currentProjectContext
+                .firmware;
+
+
+        const firmwareData =
+            base64ToUint8Array(
+                firmware.data
+            );
+
+
+        let bootloaderData =
+            null;
+
+
+        let partitionsData =
+            null;
+
+
+        if(
+            firmware.bootloader &&
+            firmware.bootloader.data
+        ){
+
+            bootloaderData =
+                base64ToUint8Array(
+                    firmware.bootloader.data
+                );
+        }
+
+
+        if(
+            firmware.partitions &&
+            firmware.partitions.data
+        ){
+
+            partitionsData =
+                base64ToUint8Array(
+                    firmware.partitions.data
+                );
+        }
+
+
+        /* -----------------------------------------
+           FILE ARRAY
+        ----------------------------------------- */
+
+        const fileArray = [];
+
+
+        if(bootloaderData){
+
+            fileArray.push({
+
+                data:bootloaderData,
+
+                address:
+                    0x1000
+            });
+        }
+
+
+        if(partitionsData){
+
+            fileArray.push({
+
+                data:partitionsData,
+
+                address:
+                    0x8000
+            });
+        }
+
+
+        fileArray.push({
+
+            data:firmwareData,
+
+            address:
+                0x10000
+        });
+
+
+        console.log(
+            "Files being flashed:",
+            fileArray
+        );
+
+
+        /* -----------------------------------------
+           START FLASH
+        ----------------------------------------- */
+
+        if(status){
+
+            status.textContent =
+                "Uploading firmware...";
+        }
+
+
+        showPopup(
+            "Uploading firmware to ESP32...",
+            "success"
+        );
+
+
+        addChatMessage(
+            "system",
+            "Uploading firmware to ESP32..."
+        );
+
+
+        await esploader.writeFlash({
+
+            fileArray:fileArray,
+
+            flashMode:"dio",
+
+            flashFreq:"80m",
+
+            flashSize:"4MB",
+
+            eraseAll:false,
+
+            compress:false,
+
+
+            reportProgress:
+                function(
+                    fileIndex,
+                    written,
+                    total
+                ){
+
+                    const percent =
+                        Math.round(
+                            (written / total) *
+                            100
+                        );
+
+
+                    if(status){
+
+                        status.textContent =
+                            "Uploading firmware... " +
+                            percent +
+                            "%";
+                    }
+
+
+                    console.log(
+                        "File",
+                        fileIndex,
+                        percent + "%"
+                    );
+                }
+        });
+
+
+        /* -----------------------------------------
+           HARD RESET
+        ----------------------------------------- */
+
+        if(status){
+
+            status.textContent =
+                "Upload complete. Restarting ESP32...";
+        }
+
+
+        addChatMessage(
+            "system",
+            "Firmware upload complete. Restarting ESP32..."
+        );
+
+
+        try{
+
+            await esploader.hardReset();
+
+        }
+        catch(error){
+
+            console.warn(
+                "Hard reset warning:",
+                error
+            );
+        }
+
+
+        /*
+         * VERY IMPORTANT
+         *
+         * Release esptool's transport before
+         * opening the serial monitor.
+         */
+
+        try{
+
+            await transport.disconnect();
+
+            console.log(
+                "esptool transport disconnected."
+            );
+
+        }
+        catch(error){
+
+            console.warn(
+                "Transport disconnect warning:",
+                error
+            );
+        }
+
+
+        showPopup(
+            "ESP32 firmware uploaded successfully! 🚀",
+            "success"
+        );
+
+
+        addChatMessage(
+            "system",
+            "ESP32 is now running the generated firmware."
+        );
+
+
+        if(status){
+
+            status.textContent =
+                "Firmware uploaded successfully. Restarted.";
+        }
+
+
+        serialStatus.textContent =
+            "firmware running";
+
+
+        connectionBadge.textContent =
+            "🟢 firmware running";
+
+
+        /*
+         * Give ESP32 time to reboot.
+         */
+
+        await new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    1500
+                )
+        );
+
+
+        /*
+         * Re-open serial monitor.
+         */
+
+        await openSerialMonitor();
+
+
+    }
+    catch(error){
+
+        console.error(
+            "FLASH ERROR:",
+            error
+        );
+
+
+        showPopup(
+            "Firmware upload failed: " +
+            (
+                error.message ||
+                error
+            ),
+            "error"
+        );
+
+
+        addChatMessage(
+            "system",
+            "Firmware upload failed: " +
+            (
+                error.message ||
+                error
+            )
+        );
+
+
+        if(status){
+
+            status.textContent =
+                "Upload failed: " +
+                (
+                    error.message ||
+                    error
+                );
+        }
+
+    }
+    finally{
+
+        flashing =
+            false;
+
+
+        updateFlashButton();
+    }
+}
+
+
+/* =====================================================
+   BASE64 → UINT8ARRAY
+====================================================== */
+
+function base64ToUint8Array(base64){
+
+    const binaryString =
+        atob(base64);
+
+
+    const len =
+        binaryString.length;
+
+
+    const bytes =
+        new Uint8Array(len);
+
+
+    for(
+        let i = 0;
+        i < len;
+        i++
+    ){
+
+        bytes[i] =
+            binaryString.charCodeAt(i);
+    }
+
+
+    return bytes;
+}
+
+
+/* =====================================================
+   FLASH BUTTON STATE
+====================================================== */
+
+function updateFlashButton(){
+
+    const checkbox =
+        document.getElementById(
+            "wiringDoneCheck"
+        );
+
+
+    const flashButton =
+        document.getElementById(
+            "flashBtn"
+        );
+
+
+    const status =
+        document.getElementById(
+            "firmwareStatus"
+        );
+
+
+    if(!flashButton)
+        return;
+
+
+    const ready =
+        checkbox &&
+        checkbox.checked &&
+        currentProjectContext.firmware &&
+        !flashing;
+
+
+    flashButton.disabled =
+        !ready;
+
+
+    if(ready){
+
+        flashButton.textContent =
+            "⬆️ Upload firmware";
+
+
+        if(status){
+
+            status.textContent =
+                "Hardware connection confirmed. Firmware upload is ready.";
+        }
+
+    }
+    else if(
+        flashing
+    ){
+
+        flashButton.textContent =
+            "⏳ Uploading...";
+
+    }
+    else if(
+        !currentProjectContext.firmware
+    ){
+
+        if(status){
+
+            status.textContent =
+                "Waiting for firmware compilation...";
+        }
+
+    }
+    else if(
+        checkbox &&
+        !checkbox.checked
+    ){
+
+        if(status){
+
+            status.textContent =
+                "Confirm the hardware connections before uploading.";
+        }
+    }
+}
+
+
+/* =====================================================
+   DISCONNECT
+====================================================== */
+
+async function disconnectBoard(){
+
+    try{
+
+        isSerialOpen =
+            false;
+
+
+        if(serialReader){
+
+            try{
+
+                await serialReader.cancel();
+
+            }
+            catch{}
+
+            try{
+
+                serialReader.releaseLock();
+
+            }
+            catch{}
+
+            serialReader =
+                null;
+        }
+
+
+        if(serialPort){
+
+            try{
+
+                await serialPort.close();
+
+            }
+            catch{}
+        }
+
+    }
+    catch(error){
+
+        console.error(error);
+    }
+
+
+    serialPort =
+        null;
+
+
+    isSerialOpen =
+        false;
+
+
+    serialStatus.textContent =
+        "disconnected";
+
+
+    connectionBadge.classList.add(
+        "hidden"
+    );
+
+
+    connectBtn.textContent =
+        "Connect ESP32";
+
+
+    connectBtn.disabled =
+        false;
+
+
+    connectBtn.classList.remove(
+        "bg-emerald-700"
+    );
+
+
+    connectBtn.classList.add(
+        "bg-blue-600"
+    );
+}
+
+
+/* =====================================================
+   SERIAL DISCONNECT EVENT
+====================================================== */
+
+if(navigator.serial){
+
+    navigator.serial.addEventListener(
+        "disconnect",
+        event=>{
+
+            if(
+                serialPort ===
+                event.target
+            ){
+
+                disconnectBoard();
+            }
+        }
+    );
+}
+
+
+/* =====================================================
+   BUTTON EVENTS
+====================================================== */
+
+generateBtn.addEventListener(
+    "click",
+    handleGenerate
+);
+
+
+connectBtn.addEventListener(
+    "click",
+    connectToBoard
+);
+
+
+/* =====================================================
+   INITIAL STATE
+====================================================== */
+
+console.log(
+    "AI Hardware IDE loaded."
+);
+
+
+console.log(
+    "esptool-js will be loaded dynamically when Upload Firmware is clicked."
+);
+
+
+</script>
+
+</body>
+</html>
